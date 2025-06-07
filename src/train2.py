@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler  # 添加混合精度训练所需的导入
+from torch.cuda.amp import autocast, GradScaler  
 
 from utils import *
 from models import *
@@ -20,9 +20,7 @@ from dataloader import *
 warnings.filterwarnings("ignore", category=Warning)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# 添加GPU内存监测函数
 def get_gpu_memory_usage():
-    """返回当前GPU内存使用情况（MB）"""
     if torch.cuda.is_available():
         return torch.cuda.memory_allocated() / 1024 / 1024
     return 0
@@ -43,26 +41,22 @@ def train(model, ppi_g, prot_embed, ppi_list, labels, index, batch_size, optimiz
         else:
             train_idx = index[batch * batch_size : (batch+1) * batch_size]
 
-        # 使用混合精度训练
-        with autocast(enabled=scaler is not None):  # 只在scaler不为None时启用
+        with autocast(enabled=scaler is not None): 
             output = model(ppi_g, prot_embed, ppi_list, train_idx)
             loss = loss_fn(output, labels[train_idx])
 
         if scaler is not None:
-            # 使用scaler进行反向传播和优化
             optimizer.zero_grad()
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
         else:
-            # 原始的反向传播和优化
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
         loss_sum += loss.item()
-        # 修改这里，确保输出转换为float32类型
-        output_float = output.detach().cpu().float()  # 显式转换为float32
+        output_float = output.detach().cpu().float() 
         f1_score = evaluat_metrics(output_float, labels[train_idx].detach().cpu())
         f1_sum += f1_score
 
@@ -88,8 +82,7 @@ def evaluator(model, ppi_g, prot_embed, ppi_list, labels, index, batch_size, mod
                 eval_idx = index[batch * batch_size : (batch+1) * batch_size]
 
             output = model(ppi_g, prot_embed, ppi_list, eval_idx)
-            # 确保输出转换为float32
-            eval_output_list.append(output.detach().cpu().float())  # 显式转换为float32
+            eval_output_list.append(output.detach().cpu().float()) 
             eval_labels_list.append(labels[eval_idx].detach().cpu())
             
         f1_score = evaluat_metrics(torch.cat(eval_output_list, dim=0), torch.cat(eval_labels_list, dim=0))
@@ -118,15 +111,12 @@ def pretrain_vae():
     vae_model = CodeBook(param, DataLoader(protein_data, batch_size=512, shuffle=False, collate_fn=collate)).to(device)
     vae_optimizer = torch.optim.Adam(vae_model.parameters(), lr=float(param['learning_rate']), weight_decay=float(param['weight_decay']))
     
-    # 添加混合精度训练的scaler
     scaler = GradScaler() if torch.cuda.is_available() else None
     
     for epoch in range(1, param["pre_epoch"] + 1):
         for iter_num, batch_graph in enumerate(vae_dataloader):
 
             batch_graph.to(device)
-
-            # 使用混合精度训练
             with autocast(enabled=scaler is not None):
                 z, e, e_q_loss, recon_loss, mask_loss = vae_model(batch_graph)
                 loss_vae = e_q_loss + recon_loss + mask_loss * param['mask_loss']
@@ -175,16 +165,13 @@ def main():
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
     loss_fn = nn.BCEWithLogitsLoss().to(device)
     
-    # 添加混合精度训练的scaler
     scaler = GradScaler() if torch.cuda.is_available() else None
     
-    # 如果启用了混合精度训练，打印提示信息
     if scaler is not None:
         print("\033[0;30;42m 已启用混合精度训练(AMP) \033[0m")
         log_file.write("已启用混合精度训练(AMP)\n")
         log_file.flush()
     
-    # 记录初始内存使用
     initial_memory = get_gpu_memory_usage()
     print(f"\033[0;30;42m 初始GPU内存使用: {initial_memory:.2f} MB \033[0m")
     log_file.write(f"初始GPU内存使用: {initial_memory:.2f} MB\n")
@@ -196,13 +183,11 @@ def main():
     test_best = 0
     best_epoch = 0
     
-    # 添加时间记录变量
     start_time = time.time()
     last_time_check = start_time
 
     for epoch in range(1, param["max_epoch"] + 1):
         
-        # 传入scaler参数
         train_loss, train_f1_score = train(model, ppi_g, prot_embed, ppi_list, labels, ppi_split_dict['train_index'], param['batch_size'], optimizer, loss_fn, epoch, scaler)
         
         scheduler.step(train_loss)
@@ -230,13 +215,11 @@ def main():
                     epoch, train_loss, train_f1_score, val_f1_score, test_f1_score, val_best, test_val, test_best, best_epoch))
             log_file.flush()
             
-            # 每10个epoch打印一次时间统计
             if epoch % 10 == 0:
                 current_time = time.time()
                 total_elapsed = current_time - start_time
                 last_10_elapsed = current_time - last_time_check
                 
-                # 添加内存使用统计
                 current_memory = get_gpu_memory_usage()
                 memory_diff = current_memory - initial_memory
                 
@@ -251,14 +234,12 @@ def main():
                     current_memory, memory_diff))
                 log_file.flush()
                 
-                # 更新上次检查时间
                 last_time_check = current_time
 
             if es == 500:
                 print("Early stopping!")
                 break
 
-    # 打印总训练时间
     total_time = time.time() - start_time
     print("\033[0;30;43m 训练完成 | 总训练时间: {:.2f}分钟 ({:.2f}小时) | 总epoch数: {} \033[0m".format(
         total_time/60, total_time/3600, epoch))
